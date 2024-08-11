@@ -101,17 +101,21 @@ public String getWifiIpAddress() {
     WifiInfo info = wifiManager.getConnectionInfo();
     int ipAddress = info.getIpAddress();
 
-    // If the device is in SoftAP mode or the IP address is 0.0.0.0
-    if (ipAddress == 0) {
+    if (ipAddress != 0) {
+        return android.text.format.Formatter.formatIpAddress(ipAddress);
+    } else {
+        // Try to get IP address via ConnectivityManager
         try {
             ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 for (Network network : cm.getAllNetworks()) {
                     LinkProperties lp = cm.getLinkProperties(network);
-                    if (lp != null && lp.getInterfaceName().contains("wlan")) {
-                        String ip = lp.getLinkAddresses().get(0).getAddress().getHostAddress();
-                        if (!ip.startsWith("0")) {
-                            return ip;
+                    if (lp != null && lp.getInterfaceName() != null && lp.getInterfaceName().contains("wlan")) {
+                        for (android.net.LinkAddress address : lp.getLinkAddresses()) {
+                            String ip = address.getAddress().getHostAddress();
+                            if (ip != null && !ip.startsWith("0") && ip.indexOf(':') < 0) { // Avoid IPv6 addresses
+                                return ip;
+                            }
                         }
                     }
                 }
@@ -120,7 +124,7 @@ public String getWifiIpAddress() {
             e.printStackTrace();
         }
     }
-    return android.text.format.Formatter.formatIpAddress(ipAddress);
+    return "Unable to obtain IP address"; // or fallback to 127.0.0.1 for testing purposes
 }
 
 }
