@@ -3,25 +3,19 @@ package nader.tools.topc;
 import android.os.Environment;
 import android.util.Log;
 import androidx.annotation.NonNull;
+import fi.iki.elonen.NanoHTTPD;
 import org.apache.commons.fileupload.FileItem;
-import org.apache.commons.fileupload.FileItemFactory;
-import org.apache.commons.fileupload.FileUploadException;
 import org.apache.commons.fileupload.disk.DiskFileItemFactory;
 import org.apache.commons.fileupload.servlet.ServletFileUpload;
 import org.apache.commons.io.IOUtils;
-import fi.iki.elonen.NanoHTTPD;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
 import java.util.List;
 import java.util.Map;
 
 public class HttpServer extends NanoHTTPD {
     private static final String TAG = "HttpServer";
-    private static final FileItemFactory fileItemFactory = new DiskFileItemFactory();
+    private final DiskFileItemFactory fileItemFactory = new DiskFileItemFactory();
     private OnStatusUpdateListener mStatusUpdateListener;
 
     public interface OnStatusUpdateListener {
@@ -63,10 +57,19 @@ public class HttpServer extends NanoHTTPD {
         Log.d(TAG, "header=" + header);
         Log.d(TAG, "params=" + parms);
 
-        if (Method.POST.equals(method) && ServletFileUpload.isMultipartContent(session)) {
+        if (Method.POST.equals(method)) {
             try {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                InputStream inputStream = session.getInputStream();
+                IOUtils.copy(inputStream, baos);
+                byte[] bytes = baos.toByteArray();
+                
+                // Convert bytes to input stream for file upload parsing
+                ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
+                
                 ServletFileUpload upload = new ServletFileUpload(fileItemFactory);
-                List<FileItem> items = upload.parseRequest(session);
+                List<FileItem> items = upload.parseRequest(new ByteArrayRequestContext(bais));
+
                 for (FileItem item : items) {
                     String name = item.getFieldName();
                     if (item.isFormField()) {
@@ -82,16 +85,16 @@ public class HttpServer extends NanoHTTPD {
                             mStatusUpdateListener.onUploadingFile(file, false);
                         }
 
-                        try (InputStream inputStream = item.getInputStream();
+                        try (InputStream itemInputStream = item.getInputStream();
                              FileOutputStream fos = new FileOutputStream(file)) {
-                            IOUtils.copy(inputStream, fos);
+                            IOUtils.copy(itemInputStream, fos);
                         }
                         if (mStatusUpdateListener != null) {
                             mStatusUpdateListener.onUploadingFile(file, true);
                         }
                     }
                 }
-            } catch (FileUploadException | IOException e) {
+            } catch (Exception e) {
                 e.printStackTrace();
                 return newFixedLengthResponse("Error uploading file!");
             }
@@ -147,5 +150,24 @@ public class HttpServer extends NanoHTTPD {
 
     public void setOnStatusUpdateListener(OnStatusUpdateListener listener) {
         mStatusUpdateListener = listener;
+    }
+
+    // Custom class to adapt InputStream for file upload parsing
+    private static class ByteArrayRequestContext extends org.apache.commons.fileupload.RequestContext {
+        private final InputStream inputStream;
+
+        public ByteArrayRequestContext(InputStream inputStream) {
+            this.inputStream = inputStream;
+        }
+
+        @Override
+        public String getCharacterEncoding() {
+            return "UTF-8";
+        }
+
+        @Override
+        public InputStream getInputStream() {
+            return inputStream;
+        }
     }
 }
