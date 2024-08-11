@@ -4,18 +4,14 @@ import android.os.Environment;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import fi.iki.elonen.NanoHTTPD;
-import org.apache.commons.fileupload.FileItem;
-import org.apache.commons.fileupload.disk.DiskFileItemFactory;
-import org.apache.commons.fileupload.servlet.ServletFileUpload;
-import org.apache.commons.io.IOUtils;
 
 import java.io.*;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 
 public class HttpServer extends NanoHTTPD {
     private static final String TAG = "HttpServer";
-    private final DiskFileItemFactory fileItemFactory = new DiskFileItemFactory();
+    private static final String BOUNDARY = "----WebKitFormBoundary7MA4YWxkTrZu0gW"; // Adjust boundary as needed
     private OnStatusUpdateListener mStatusUpdateListener;
 
     public interface OnStatusUpdateListener {
@@ -59,41 +55,20 @@ public class HttpServer extends NanoHTTPD {
 
         if (Method.POST.equals(method)) {
             try {
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                // Read the entire request body
                 InputStream inputStream = session.getInputStream();
-                IOUtils.copy(inputStream, baos);
-                byte[] bytes = baos.toByteArray();
-                
-                // Convert bytes to input stream for file upload parsing
-                ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
-                
-                ServletFileUpload upload = new ServletFileUpload(fileItemFactory);
-                List<FileItem> items = upload.parseRequest(new ByteArrayRequestContext(bais));
-
-                for (FileItem item : items) {
-                    String name = item.getFieldName();
-                    if (item.isFormField()) {
-                        Log.d(TAG, "Item is form field, name=" + name + ", value=" + item.getString());
-                    } else {
-                        String fileName = item.getName();
-                        Log.d(TAG, "Item is file field, name=" + name + ", fileName=" + fileName);
-
-                        File file = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName);
-                        String path = file.getAbsolutePath();
-                        Log.d(TAG, "Save file to " + path);
-                        if (mStatusUpdateListener != null) {
-                            mStatusUpdateListener.onUploadingFile(file, false);
-                        }
-
-                        try (InputStream itemInputStream = item.getInputStream();
-                             FileOutputStream fos = new FileOutputStream(file)) {
-                            IOUtils.copy(itemInputStream, fos);
-                        }
-                        if (mStatusUpdateListener != null) {
-                            mStatusUpdateListener.onUploadingFile(file, true);
-                        }
-                    }
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+                while ((bytesRead = inputStream.read(buffer)) != -1) {
+                    baos.write(buffer, 0, bytesRead);
                 }
+                byte[] requestBody = baos.toByteArray();
+                String bodyString = new String(requestBody);
+
+                // Parse the multipart form data manually
+                parseMultipartData(bodyString);
+
             } catch (Exception e) {
                 e.printStackTrace();
                 return newFixedLengthResponse("Error uploading file!");
@@ -122,7 +97,7 @@ public class HttpServer extends NanoHTTPD {
                 answer += "</head></html>";
             } else {
                 // Serve file download
-                InputStream inputStream;
+                InputStream fileInputStream;
                 Response response = null;
                 Log.d(TAG, "downloading file " + rootFile.getAbsolutePath());
                 if (mStatusUpdateListener != null) {
@@ -130,8 +105,8 @@ public class HttpServer extends NanoHTTPD {
                 }
 
                 try {
-                    inputStream = new FileInputStream(rootFile);
-                    response = new DownloadResponse(rootFile, inputStream);
+                    fileInputStream = new FileInputStream(rootFile);
+                    response = new DownloadResponse(rootFile, fileInputStream);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -148,26 +123,41 @@ public class HttpServer extends NanoHTTPD {
         return newFixedLengthResponse(answer);
     }
 
-    public void setOnStatusUpdateListener(OnStatusUpdateListener listener) {
-        mStatusUpdateListener = listener;
+    private void parseMultipartData(String bodyString) {
+        // Parse the bodyString manually based on your boundary
+        // This is a very basic example and may need improvements
+
+        String[] parts = bodyString.split("--" + BOUNDARY);
+        for (String part : parts) {
+            if (part.contains("Content-Disposition: form-data")) {
+                // Extract filename and content
+                String[] lines = part.split("\r\n");
+                String contentDisposition = lines[1];
+                String content = lines[4];
+
+                // Extract filename
+                String filename = contentDisposition.split("filename=")[1].split("\r\n")[0];
+                filename = filename.replace("\"", "");
+
+                // Save file
+                File file = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), filename);
+                if (mStatusUpdateListener != null) {
+                    mStatusUpdateListener.onUploadingFile(file, false);
+                }
+
+                try (FileOutputStream fos = new FileOutputStream(file)) {
+                    fos.write(content.getBytes());
+                    if (mStatusUpdateListener != null) {
+                        mStatusUpdateListener.onUploadingFile(file, true);
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
     }
 
-    // Custom class to adapt InputStream for file upload parsing
-    private static class ByteArrayRequestContext extends org.apache.commons.fileupload.RequestContext {
-        private final InputStream inputStream;
-
-        public ByteArrayRequestContext(InputStream inputStream) {
-            this.inputStream = inputStream;
-        }
-
-        @Override
-        public String getCharacterEncoding() {
-            return "UTF-8";
-        }
-
-        @Override
-        public InputStream getInputStream() {
-            return inputStream;
-        }
+    public void setOnStatusUpdateListener(OnStatusUpdateListener listener) {
+        mStatusUpdateListener = listener;
     }
 }
