@@ -3,25 +3,18 @@ package nader.tools.topc;
 import android.os.Environment;
 import android.util.Log;
 import androidx.annotation.NonNull;
-import org.apache.commons.fileupload.FileItem;
-import org.apache.commons.fileupload.FileItemFactory;
-import org.apache.commons.fileupload.FileUploadException;
-import org.apache.commons.fileupload.disk.DiskFileItemFactory;
-import org.apache.commons.fileupload.servlet.ServletFileUpload;
-import org.apache.commons.io.IOUtils;
 import fi.iki.elonen.NanoHTTPD;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.List;
 import java.util.Map;
 
 public class HttpServer extends NanoHTTPD {
     private static final String TAG = "HttpServer";
-    private static final FileItemFactory fileItemFactory = new DiskFileItemFactory();
     private OnStatusUpdateListener mStatusUpdateListener;
 
     public interface OnStatusUpdateListener {
@@ -63,39 +56,39 @@ public class HttpServer extends NanoHTTPD {
         Log.d(TAG, "header=" + header);
         Log.d(TAG, "params=" + parms);
 
-        if (ServletFileUpload.isMultipartContent(session)) {
+        if (Method.POST.equals(method) && session.getHeaders().containsKey("content-type") && 
+            session.getHeaders().get("content-type").startsWith("multipart/form-data")) {
+            // Handle file upload
             try {
-                ServletFileUpload upload = new ServletFileUpload(fileItemFactory);
-                List<FileItem> items = upload.parseRequest(session);
-                for (FileItem item : items) {
-                    String name = item.getFieldName();
-                    if (item.isFormField()) {
-                        Log.d(TAG, "Item is form field, name=" + name + ", value=" + item.getString());
-                    } else {
-                        String fileName = item.getName();
-                        Log.d(TAG, "Item is file field, name=" + name + ", fileName=" + fileName);
+                // Custom file upload handling for NanoHTTPD
+                Map<String, String> files = session.getFiles();
+                for (Map.Entry<String, String> entry : files.entrySet()) {
+                    String name = entry.getKey();
+                    String fileName = entry.getValue();
+                    
+                    File file = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName);
+                    Log.d(TAG, "Save file to " + file.getAbsolutePath());
+                    if (mStatusUpdateListener != null) {
+                        mStatusUpdateListener.onUploadingFile(file, false);
+                    }
 
-                        File file = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName);
-                        String path = file.getAbsolutePath();
-                        Log.d(TAG, "Save file to " + path);
-                        if (mStatusUpdateListener != null) {
-                            mStatusUpdateListener.onUploadingFile(file, false);
-                        }
-
-                        try (InputStream inputStream = item.getInputStream();
-                             FileOutputStream fos = new FileOutputStream(file)) {
-                            IOUtils.copy(inputStream, fos);
-                        }
-                        if (mStatusUpdateListener != null) {
-                            mStatusUpdateListener.onUploadingFile(file, true);
+                    try (InputStream inputStream = session.getInputStream();
+                         FileOutputStream fos = new FileOutputStream(file)) {
+                        byte[] buffer = new byte[1024];
+                        int bytesRead;
+                        while ((bytesRead = inputStream.read(buffer)) != -1) {
+                            fos.write(buffer, 0, bytesRead);
                         }
                     }
+                    if (mStatusUpdateListener != null) {
+                        mStatusUpdateListener.onUploadingFile(file, true);
+                    }
                 }
-            } catch (FileUploadException | IOException e) {
+            } catch (IOException e) {
                 e.printStackTrace();
                 return newFixedLengthResponse("Error uploading file!");
             }
-        } else if (method.equals(Method.GET)) {
+        } else if (Method.GET.equals(method)) {
             File rootFile = Environment.getExternalStorageDirectory();
             uri = uri.replace(rootFile.getAbsolutePath(), "");
             rootFile = new File(rootFile + uri);
