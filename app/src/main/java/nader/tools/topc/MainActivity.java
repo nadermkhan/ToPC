@@ -1,6 +1,7 @@
 package nader.tools.topc;
 
-import android.net.wifi.WifiInfo;
+import android.content.Context;
+import android.net.DhcpInfo;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import androidx.appcompat.app.AppCompatActivity; // Updated to AndroidX
@@ -9,14 +10,10 @@ import android.widget.TextView;
 
 import java.io.File;
 import java.io.IOException;
-
-//add 
-
-import android.net.ConnectivityManager;
-import android.net.LinkProperties;
-import android.net.Network;
-import android.net.wifi.WifiManager;
-import android.os.Build;
+import java.math.BigInteger;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.nio.ByteOrder;
 
 public class MainActivity extends AppCompatActivity {
 	private static final String TAG = "MainActivity";
@@ -30,10 +27,11 @@ public class MainActivity extends AppCompatActivity {
 		setContentView(R.layout.activity_main);
 		
 		TextView tv = (TextView) findViewById(R.id.server_info);
+		String ipAddress = getHotspotIPAddress(); // Use the correct method to get IP Address
 		StringBuilder serverInfo = new StringBuilder().append("HTTP Server Address: http://")
-		.append(getWifiIpAddress()).append(":8080\n")
+		.append(ipAddress).append(":8080\n")
 		.append("Using \"curl -F file=@myfile").append(" http://")
-		.append(getWifiIpAddress()).append(":8080\" ").append(" to upload file");
+		.append(ipAddress).append(":8080\" ").append(" to upload file");
 		tv.setText(serverInfo);
 		
 		mUploadInfo = (TextView) findViewById(R.id.upload_info);
@@ -84,7 +82,7 @@ public class MainActivity extends AppCompatActivity {
 		
 		try {
 			mHttpd.start();
-			} catch (IOException e) {
+		} catch (IOException e) {
 			e.printStackTrace();
 		}
 	}
@@ -95,35 +93,24 @@ public class MainActivity extends AppCompatActivity {
 		super.onDestroy();
 	}
 	
+	public String getHotspotIPAddress() {
+		WifiManager wifiManager = (WifiManager) getSystemService(Context.WIFI_SERVICE);
+		DhcpInfo dhcpInfo = wifiManager.getDhcpInfo();
+		int ipAddress = dhcpInfo.serverAddress;
 
-public String getWifiIpAddress() {
-    WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-    WifiInfo info = wifiManager.getConnectionInfo();
-    int ipAddress = info.getIpAddress();
+		if (ByteOrder.nativeOrder().equals(ByteOrder.LITTLE_ENDIAN)) {
+			ipAddress = Integer.reverseBytes(ipAddress);
+		}
 
-    if (ipAddress != 0) {
-        return android.text.format.Formatter.formatIpAddress(ipAddress);
-    } else {
-        try {
-            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                for (Network network : cm.getAllNetworks()) {
-                    LinkProperties lp = cm.getLinkProperties(network);
-                    if (lp != null && lp.getInterfaceName() != null && lp.getInterfaceName().startsWith("wlan")) {
-                        for (android.net.LinkAddress address : lp.getLinkAddresses()) {
-                            String ip = address.getAddress().getHostAddress();
-                            if (ip != null && !ip.startsWith("0") && !ip.contains(":")) { // Ignore IPv6 addresses
-                                return ip;
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-    return "Unable to obtain IP address";
-}
+		byte[] ipByteArray = BigInteger.valueOf(ipAddress).toByteArray();
 
+		String ipAddressString;
+		try {
+			ipAddressString = InetAddress.getByAddress(ipByteArray).getHostAddress();
+		} catch (UnknownHostException ex) {
+			ipAddressString = "";
+		}
+
+		return ipAddressString;
+	}
 }
